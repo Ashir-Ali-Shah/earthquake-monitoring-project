@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { MapPin, Search, TrendingUp, AlertTriangle, RefreshCw, BarChart3, Globe, Clock, Activity, Zap, Waves, Navigation, Layers, MessageSquare, Brain, Sparkles, AlertCircle, ChevronRight, Flame, Target, Info } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell, PieChart, Pie, Legend, CartesianGrid } from 'recharts';
-const API_BASE_URL = 'http://localhost:8000/api';
-const App = () => {
+const API_BASE_URL = process.env.NODE_ENV === 'production' 
+  ? 'https://earthquake-backend.onrender.com/api'  // <-- Your Render URL here
+  : 'http://localhost:8000/api';
+  const App = () => {
   const [stats, setStats] = useState(null);
   const [hotspots, setHotspots] = useState([]);
   const [recentEarthquakes, setRecentEarthquakes] = useState([]);

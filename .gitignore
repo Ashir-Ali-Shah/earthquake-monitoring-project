@@ -1,3 +1,17 @@
+# Dependencies
 node_modules/
 __pycache__/
+*.pyc
+venv/
 .env
+
+# OS files
+.DS_Store
+
+# Large Data & Models (Optional: un-comment if files are >100MB)
+# *.keras
+# *.pkl
+# *.db
+
+# Docker
+.docker/

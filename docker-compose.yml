@@ -1,18 +1,26 @@
 services:
+  # Python Backend Service
   backend:
     build: ./backend
-    container_name: earthquake-backend
+    container_name: earthquake_backend
     ports:
       - "8000:8000"
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY}
+    volumes:
+      # Persist trained models (LSTM, scaler) so they survive restarts
+      - model_data:/app
     restart: always
 
+  # React Frontend Service
   frontend:
     build: ./frontend
-    container_name: earthquake-frontend
+    container_name: earthquake_frontend
     ports:
       - "3000:80"
     depends_on:
       - backend
     restart: always
+
+volumes:
+  model_data:
