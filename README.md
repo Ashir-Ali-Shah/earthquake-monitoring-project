@@ -85,23 +85,3 @@ Run with Docker Compose
 Bash
 
 docker compose up --build
-Access the Application
-
-Frontend Dashboard: http://localhost:3000
-
-Backend API Docs: http://localhost:8000/docs
-
-📂 Project Structure
-Plaintext
-
-/
-├── docker-compose.yml      # Orchestration config
-├── /backend                # FastAPI & ML Service
-│   ├── Dockerfile
-│   ├── main.py             # Application entry point & Logic
-│   ├── requirements.txt    # Python dependencies
-│   └── ...
-└── /frontend               # React Application
-    ├── Dockerfile
-    ├── src/
-    └── public/
