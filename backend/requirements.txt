@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+numpy<2.0.0
+pandas
+scikit-learn
+requests
+tensorflow
+tf-keras
+sentence-transformers
+faiss-cpu==1.7.4
+spacy
+pydantic
