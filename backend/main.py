@@ -1,3 +1,7 @@
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+import torch
+torch.set_num_threads(1)
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -9,9 +13,16 @@ from datetime import datetime, timedelta, timezone
 import warnings
 import json
 import pickle
-import os
+import traceback
 import traceback
 from collections import Counter
+
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["MKL_THREADING_LAYER"] = "GNU"
 
 # Updated Import to match your training script
 from sklearn.preprocessing import MinMaxScaler
@@ -35,26 +46,40 @@ except ImportError:
     print("TensorFlow/Keras not available. LSTM forecasting disabled.")
 
 try:
+    import torch
+    torch.set_num_threads(1)
     from sentence_transformers import SentenceTransformer
-    import faiss
+    # import faiss  # Removed strictly to prevent memory corruption (free(): invalid pointer) with PyTorch OpenMP!
     VECTOR_SEARCH_AVAILABLE = True
 except ImportError:
     VECTOR_SEARCH_AVAILABLE = False
-    print("SentenceTransformers or FAISS not available. Vector search disabled.")
+    print("SentenceTransformers not available. Vector search disabled.")
 
 try:
     import spacy
-    nlp_model = spacy.load("en_core_web_sm")
-    SPACY_AVAILABLE = True
+    nlp_model = None # spacy.load("en_core_web_sm")
+    SPACY_AVAILABLE = False
 except:
     SPACY_AVAILABLE = False
     nlp_model = None
     print("spaCy not available. Entity extraction disabled.")
 
 # ------------------- Config -------------------
+from dotenv import load_dotenv
+load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "llama-3.1-70b-versatile"
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+
+try:
+    from pinecone import Pinecone, ServerlessSpec
+    if PINECONE_API_KEY:
+        pc = Pinecone(api_key=PINECONE_API_KEY)
+    else:
+        pc = None
+except ImportError:
+    pc = None
 
 app = FastAPI(
     title="USGS Earthquake Intelligence System",
@@ -363,7 +388,8 @@ def predict_next_earthquakes(req: LSTMPredictionRequest) -> List[Dict]:
             input_seq = seq_scaled.reshape(1, LSTM_SEQ_LENGTH, feature_count)
             
             # Predict scaled magnitude
-            predicted_mag_scaled = lstm_model.predict(input_seq, verbose=0)[0][0]
+            # Use direct __call__ instead of predict() for an order of magnitude faster response
+            predicted_mag_scaled = float(lstm_model(input_seq, training=False)[0][0])
             
             # Inverse transform
             # Construct a dummy row to use inverse_transform (we only care about index 0)
@@ -499,66 +525,76 @@ class VectorStore:
     """Vector store for semantic search of earthquake events"""
     
     def __init__(self):
-        self.index = None
-        self.metadata = []
         self.model = None
+        self.index = None
     
     def build(self, df: pd.DataFrame):
-        """Build FAISS index from earthquake data"""
-        if not VECTOR_SEARCH_AVAILABLE:
+        """Build Pinecone index from earthquake data"""
+        if not VECTOR_SEARCH_AVAILABLE or pc is None or pinecone_index is None:
             return
 
         try:
             self.model = SentenceTransformer('all-MiniLM-L6-v2')
             
-            texts = []
-            self.metadata = []
+            # Fast startup: skip re-upserting if vector store already has records
+            stats = pinecone_index.describe_index_stats()
+            if stats.get('total_vector_count', 0) > 0:
+                print(f"Pinecone index already populated with {stats.get('total_vector_count')} records. Skipping upsert.")
+                self.index = True
+                return
             
-            # Limit for vector search to avoid memory issues on free tiers
-            sample_df = df.head(2000)
-            
-            for _, r in sample_df.iterrows():
-                text = f"Magnitude {r['magnitude']} earthquake {r['place']} at depth {r['depth']}km on {r['timestamp_str']}"
-                texts.append(text)
+            print(f"Starting Pinecone upsert for {len(df)} records...")
+            batch_size = 200
+            for i in range(0, len(df), batch_size):
+                batch_df = df.iloc[i:i+batch_size]
+                texts = []
+                metas = []
+                ids = []
+                for idx, r in batch_df.iterrows():
+                    text = f"Magnitude {r['magnitude']} earthquake {r['place']} at depth {r['depth']}km on {r['timestamp_str']}"
+                    texts.append(text)
+                    ids.append(str(r.get('id', str(idx))))
+                    metas.append({
+                        "magnitude": float(r['magnitude']) if pd.notna(r['magnitude']) else 0.0,
+                        "place": str(r['place']),
+                        "timestamp": str(r['timestamp_str']),
+                        "latitude": float(r['latitude']) if pd.notna(r['latitude']) else 0.0,
+                        "longitude": float(r['longitude']) if pd.notna(r['longitude']) else 0.0,
+                        "depth": float(r['depth']) if pd.notna(r['depth']) else 0.0,
+                        "title": str(r.get('title', ''))
+                    })
                 
-                self.metadata.append({
-                    "id": str(r.get('id', '')),
-                    "magnitude": float(r['magnitude']) if pd.notna(r['magnitude']) else 0.0,
-                    "place": str(r['place']),
-                    "timestamp": str(r['timestamp_str']),
-                    "latitude": float(r['latitude']) if pd.notna(r['latitude']) else 0.0,
-                    "longitude": float(r['longitude']) if pd.notna(r['longitude']) else 0.0,
-                    "depth": float(r['depth']) if pd.notna(r['depth']) else 0.0,
-                    "title": str(r.get('title', ''))
-                })
+                # Batch encode
+                embeddings = self.model.encode(texts).tolist()
+                
+                vectors = []
+                for j in range(len(ids)):
+                    vectors.append({"id": ids[j], "values": embeddings[j], "metadata": metas[j]})
+                    
+                pinecone_index.upsert(vectors=vectors)
             
-            # Create embeddings
-            embeddings = self.model.encode(texts, show_progress_bar=False)
+            self.index = True
             
-            # Build FAISS index
-            dim = embeddings.shape[1]
-            self.index = faiss.IndexFlatL2(dim)
-            self.index.add(embeddings.astype('float32'))
-            
-            print(f"Vector store built with {len(texts)} entries")
+            print(f"Vector store built via Pinecone with {len(df)} entries")
         except Exception as e:
             print(f"Vector store build failed: {e}")
     
     def search(self, query: str, k: int = 5):
         """Search for similar earthquake events"""
-        if not self.index or not self.model:
+        if not getattr(self, "index", None) or not self.model or pinecone_index is None:
             return []
         
         try:
-            q_vec = self.model.encode([query])
-            D, I = self.index.search(q_vec.astype('float32'), k)
+            q_vec = self.model.encode(query).tolist()
+            
+            res = pinecone_index.query(vector=q_vec, top_k=k, include_metadata=True)
             
             results = []
-            for dist, idx in zip(D[0], I[0]):
-                if idx < len(self.metadata):
-                    meta = self.metadata[idx].copy()
-                    meta['similarity_score'] = float(1 / (1 + dist))
-                    results.append(meta)
+            for match in res.get('matches', []):
+                meta = match.get('metadata', {})
+                meta['id'] = match.get('id')
+                meta['similarity_score'] = match.get('score')
+                results.append(meta)
             
             return results
         except Exception as e:
@@ -571,60 +607,41 @@ class SimpleRAG:
     def __init__(self):
         self.model = None
         self.index = None
-        self.docs = []
-        self.meta = []
     
     def build(self, df: pd.DataFrame):
         """Build RAG index from earthquake data"""
-        if not VECTOR_SEARCH_AVAILABLE:
+        if not VECTOR_SEARCH_AVAILABLE or pc is None or pinecone_index is None:
             return
 
         try:
             self.model = SentenceTransformer('all-MiniLM-L6-v2')
             
-            sample = df.head(500)
+            # Since VectorStore already upserts all vectors with metadata,
+            # we can just use the Pinecone index for queries directly.
+            self.index = True
             
-            for _, r in sample.iterrows():
-                text = f"Magnitude {r['magnitude']} at {r['place']}, depth {r['depth']}km, time {r['timestamp_str']}"
-                self.docs.append(text)
-                
-                self.meta.append({
-                    "magnitude": float(r['magnitude']),
-                    "place": str(r['place']),
-                    "timestamp": str(r['timestamp_str']),
-                    "depth": float(r['depth'])
-                })
-            
-            # Create embeddings
-            embs = self.model.encode(self.docs, convert_to_numpy=True, show_progress_bar=False)
-            
-            # Build FAISS index
-            d = embs.shape[1]
-            self.index = faiss.IndexFlatIP(d)
-            faiss.normalize_L2(embs)
-            self.index.add(embs.astype('float32'))
-            
-            print("RAG index ready")
+            print("RAG index ready via Pinecone")
         except Exception as e:
             print(f"RAG build failed: {e}")
     
     def query(self, question: str, k: int = 5):
         """Query RAG system with a question"""
-        if not self.index or not self.model:
+        if not getattr(self, "index", None) or not self.model or pinecone_index is None:
             return "RAG system not initialized", []
         
         try:
-            # Encode query
-            q = self.model.encode([question], convert_to_numpy=True)
-            faiss.normalize_L2(q)
+            q_vec = self.model.encode(question).tolist()
             
-            # Search
-            scores, idxs = self.index.search(q.astype('float32'), k)
-            sources = [self.meta[i] for i in idxs[0] if i < len(self.meta)]
+            res = pinecone_index.query(vector=q_vec, top_k=k, include_metadata=True)
+            sources = []
+            for match in res.get('matches', []):
+                meta = match.get('metadata', {})
+                meta['id'] = match.get('id')
+                sources.append(meta)
             
             # Build context for LLM
             context = "\n".join([
-                f"{i+1}. M{s['magnitude']} {s['place']} ({s['timestamp']})" 
+                f"{i+1}. M{s.get('magnitude', '')} {s.get('place', '')} ({s.get('timestamp', '')})" 
                 for i, s in enumerate(sources[:3])
             ])
             
@@ -667,11 +684,11 @@ class SimpleRAG:
             return "No relevant earthquake data found for your question."
         
         # Extract statistics
-        magnitudes = [s['magnitude'] for s in sources]
-        places = [s['place'] for s in sources]
+        magnitudes = [s.get('magnitude', 0) for s in sources]
+        places = [s.get('place', '') for s in sources]
         
-        avg_mag = sum(magnitudes) / len(magnitudes)
-        max_mag = max(magnitudes)
+        avg_mag = sum(magnitudes) / len(magnitudes) if magnitudes else 0
+        max_mag = max(magnitudes) if magnitudes else 0
         
         # Count most common location
         location_counter = Counter(places)
@@ -687,15 +704,33 @@ class SimpleRAG:
 vector_store = VectorStore()
 simple_rag = SimpleRAG()
 
+pinecone_index = None
+
 # ------------------- Initialization -------------------
 def init_system():
     """Initialize the entire system"""
     global earthquake_df
+    global pinecone_index
     
     print("Initializing system...")
     
-    # Initialize LSTM models
-    initialize_lstm_model()
+    if pc is not None:
+        try:
+            # Note: For Pinecone v3, pc.list_indexes().names() returns the list of names
+            active_indexes = pc.list_indexes().names()
+            if "earthquake-index" not in active_indexes:
+                print("Creating Pinecone index 'earthquake-index'...")
+                pc.create_index(
+                    name="earthquake-index", 
+                    dimension=384, 
+                    metric="cosine", 
+                    spec=ServerlessSpec(cloud="aws", region="us-east-1")
+                )
+            pinecone_index = pc.Index("earthquake-index")
+            print("Pinecone index initialized.")
+        except Exception as e:
+            print(f"Failed to initialize Pinecone index: {e}")
+            pinecone_index = None
     
     # Fetch earthquake data
     raw = fetch_earthquakes()
@@ -708,11 +743,14 @@ def init_system():
     earthquake_df = df
     print(f"Loaded {len(df)} earthquakes")
     
-    # Build vector store
+    # Build vector store FIRST (to prevent PyTorch/TF thread deadlock)
     vector_store.build(df)
     
     # Build RAG system
     simple_rag.build(df)
+
+    # Initialize LSTM models AFTER PyTorch models are loaded
+    initialize_lstm_model()
     
     # Prepare LSTM data (Sequence generation + Feature Engineering)
     if lstm_model:
@@ -874,8 +912,11 @@ async def hotspots(limit: int = Query(default=10, ge=1, le=50)):
     return {"hotspots": results}
 
 @app.post("/api/search")
-async def search(req: SearchRequest):
+def search(req: SearchRequest):
     """Semantic search for earthquakes"""
+    if earthquake_df is None:
+        raise HTTPException(status_code=503, detail="System not ready")
+    
     # Extract entities if available
     entities = []
     if SPACY_AVAILABLE and nlp_model:
@@ -896,7 +937,7 @@ async def search(req: SearchRequest):
     }
 
 @app.post("/api/rag/query")
-async def rag(req: RAGQueryRequest):
+def rag(req: RAGQueryRequest):
     """RAG-based question answering"""
     # Extract entities if available
     entities = []

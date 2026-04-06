@@ -5,9 +5,9 @@ requests
 pandas
 numpy
 scikit-learn
-tensorflow
-tf-keras          
-sentence-transformers
-faiss-cpu             
-spacy
 python-multipart
+python-dotenv
+pinecone
+tensorflow
+tf-keras
+sentence-transformers

@@ -1,0 +1,58 @@
+INFO:     Will watch for changes in these directories: ['/Users/ashirshah/earthquake-app-full/backend']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [12987] using WatchFiles
+TensorFlow version: 2.20.0
+Starting USGS Earthquake Intelligence System API...
+Documentation available at: http://localhost:8000/docs
+INFO:     Started server process [13148]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+TensorFlow version: 2.20.0
+TensorFlow version: 2.20.0
+Initializing system...
+Pinecone index initialized.
+LSTM model loaded successfully
+Fetched 20000 earthquakes from USGS
+Loaded 20000 earthquakes
+Starting Pinecone upsert for 20000 records...
+Vector store built via Pinecone with 20000 entries
+RAG index ready via Pinecone
+LSTM sequence ready: 20000 events processed with advanced energy features.
+System ready!
+INFO:     127.0.0.1:50554 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50555 - "GET /api/hotspots?limit=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50554 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50557 - "GET /api/earthquakes/recent?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50555 - "GET /api/hotspots?limit=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50558 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50554 - "GET /api/earthquakes/recent?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50558 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50561 - "OPTIONS /api/predict/lstm HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50561 - "POST /api/predict/lstm HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50563 - "POST /api/predict/lstm HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50566 - "OPTIONS /api/search HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50566 - "POST /api/search HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50568 - "OPTIONS /api/rag/query HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50568 - "POST /api/rag/query HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50581 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50583 - "GET /api/hotspots?limit=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50584 - "GET /api/earthquakes/recent?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50586 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50595 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50596 - "GET /api/hotspots?limit=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50598 - "GET /api/earthquakes/recent?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50599 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50608 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50610 - "GET /api/hotspots?limit=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50611 - "GET /api/earthquakes/recent?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50612 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50623 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50624 - "GET /api/hotspots?limit=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50626 - "GET /api/earthquakes/recent?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50627 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51196 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51197 - "GET /api/hotspots?limit=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51200 - "GET /api/earthquakes/recent?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51201 - "GET /api/health HTTP/1.1" 200 OK
+/opt/anaconda3/lib/python3.11/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '

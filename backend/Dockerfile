@@ -17,8 +17,7 @@ COPY requirements.txt .
 # This step will take a while due to TensorFlow/Torch
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Download Spacy model during build so it's baked into the image
-RUN python -m spacy download en_core_web_sm
+
 
 # Copy the rest of the application code
 COPY . .
