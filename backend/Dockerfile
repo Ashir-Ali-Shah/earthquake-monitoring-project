@@ -28,6 +28,5 @@ VOLUME /app/data
 # Expose the port
 EXPOSE 8000
 
-ENV TF_USE_LEGACY_KERAS=1
 # Run the application
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

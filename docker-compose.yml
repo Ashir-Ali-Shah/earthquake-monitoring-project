@@ -7,6 +7,8 @@ services:
       - "8000:8000"
     env_file:
       - backend/.env
+    environment:
+      - PYTHONUNBUFFERED=1
     restart: always
 
   # React Frontend Service

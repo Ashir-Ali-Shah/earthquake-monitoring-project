@@ -4,10 +4,7 @@ pydantic
 requests
 pandas
 numpy
-scikit-learn
 python-multipart
 python-dotenv
 pinecone
-tensorflow
-tf-keras
 sentence-transformers

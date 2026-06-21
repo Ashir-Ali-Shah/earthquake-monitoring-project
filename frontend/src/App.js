@@ -21,18 +21,7 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api
   const [apiError, setApiError] = useState(null);
   const [lastUpdate, setLastUpdate] = useState(new Date());
   const [summaryDashboardData, setSummaryDashboardData] = useState([]);
-  const [featureInputs, setFeatureInputs] = useState({
-    magnitude: '',
-    depth: '',
-    latitude: '',
-    longitude: '',
-    delta_t: '',
-    log_cum_energy_50: ''
-  });
-  const [numPredictions, setNumPredictions] = useState(1);
-  const [predicting, setPredicting] = useState(false);
-  const [forecastResult, setForecastResult] = useState(null);
-  const [forecastError, setForecastError] = useState(null);
+
   useEffect(() => {
     fetchData();
     checkSystemHealth();
@@ -174,6 +163,7 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api
     if (!ragQuestion.trim()) return;
     setRagLoading(true);
     setApiError(null);
+    setRagAnswer({ answer: '', extracted_entities: [], sources: [] });
   
     try {
       const response = await fetch(`${API_BASE_URL}/rag/query`, {
@@ -184,8 +174,47 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api
     
       if (!response.ok) throw new Error('RAG query failed');
     
-      const data = await response.json();
-      setRagAnswer(data);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      
+      let answerText = '';
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const chunkStr = decoder.decode(value, { stream: true });
+        const lines = chunkStr.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const dataStr = line.replace('data: ', '').trim();
+            if (!dataStr) continue;
+            
+            try {
+              const data = JSON.parse(dataStr);
+              
+              if (data.error) {
+                setRagAnswer(prev => ({ ...prev, error: data.error }));
+                break;
+              }
+              
+              if (data.type === 'entities') {
+                setRagAnswer(prev => ({ ...prev, extracted_entities: data.extracted_entities || [] }));
+              } else if (data.type === 'metadata') {
+                setRagAnswer(prev => ({ ...prev, sources: data.sources || [] }));
+              } else if (data.type === 'chunk') {
+                answerText += data.content;
+                setRagAnswer(prev => ({ ...prev, answer: answerText }));
+              } else if (data.type === 'done') {
+                // stream finished
+              }
+            } catch (e) {
+              console.error('Error parsing SSE data:', e);
+            }
+          }
+        }
+      }
     } catch (error) {
       console.error('Error querying RAG:', error);
       setRagAnswer({
@@ -196,129 +225,7 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api
       setRagLoading(false);
     }
   };
-  const handleInputChange = (field, value) => {
-    setFeatureInputs(prev => ({
-      ...prev,
-      [field]: value
-    }));
-    setForecastError(null);
-  };
-  const validateInputs = () => {
-    const { magnitude, depth, latitude, longitude, delta_t, log_cum_energy_50 } = featureInputs;
-  
-    if (!magnitude || !depth || !latitude || !longitude || !delta_t || !log_cum_energy_50) {
-      setForecastError('All fields are required');
-      return false;
-    }
-    const mag = parseFloat(magnitude);
-    const dep = parseFloat(depth);
-    const lat = parseFloat(latitude);
-    const lon = parseFloat(longitude);
-    const dt = parseFloat(delta_t);
-    const energy = parseFloat(log_cum_energy_50);
-    if (isNaN(mag) || isNaN(dep) || isNaN(lat) || isNaN(lon) || isNaN(dt) || isNaN(energy)) {
-      setForecastError('All inputs must be valid numbers');
-      return false;
-    }
-    if (mag < 0 || mag > 10) {
-      setForecastError('Magnitude must be between 0 and 10');
-      return false;
-    }
-    if (dep < 0) {
-      setForecastError('Depth must be positive');
-      return false;
-    }
-    if (lat < -90 || lat > 90) {
-      setForecastError('Latitude must be between -90 and 90');
-      return false;
-    }
-    if (lon < -180 || lon > 180) {
-      setForecastError('Longitude must be between -180 and 180');
-      return false;
-    }
-    if (dt < 0) {
-      setForecastError('Delta time must be positive');
-      return false;
-    }
-    return true;
-  };
-  const handleForecastPredict = async () => {
-    if (!validateInputs()) return;
-    setPredicting(true);
-    setForecastError(null);
-    setForecastResult(null);
-    try {
-      const response = await fetch(`${API_BASE_URL}/predict/lstm`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          num_predictions: numPredictions,
-          latitude: parseFloat(featureInputs.latitude),
-          longitude: parseFloat(featureInputs.longitude),
-          depth: parseFloat(featureInputs.depth),
-          magnitude: parseFloat(featureInputs.magnitude),
-          delta_t: parseFloat(featureInputs.delta_t),
-          log_cum_energy_50: parseFloat(featureInputs.log_cum_energy_50)
-        })
-      });
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || 'Prediction failed');
-      }
-      const data = await response.json();
-      setForecastResult(data);
-    } catch (err) {
-      console.error('Prediction error:', err);
-      setForecastError(err.message || 'Failed to get prediction. Ensure backend is running.');
-    } finally {
-      setPredicting(false);
-    }
-  };
-  const loadExample = (exampleType) => {
-    const examples = {
-      typical: {
-        magnitude: '4.5',
-        depth: '50',
-        latitude: '35.68',
-        longitude: '139.76',
-        delta_t: '3600',
-        log_cum_energy_50: '12.5'
-      },
-      shallow: {
-        magnitude: '5.2',
-        depth: '10',
-        latitude: '37.77',
-        longitude: '-122.42',
-        delta_t: '7200',
-        log_cum_energy_50: '13.2'
-      },
-      deep: {
-        magnitude: '6.0',
-        depth: '150',
-        latitude: '-6.21',
-        longitude: '106.85',
-        delta_t: '1800',
-        log_cum_energy_50: '14.5'
-      }
-    };
-    setFeatureInputs(examples[exampleType]);
-    setForecastError(null);
-    setForecastResult(null);
-  };
-  const resetForecastForm = () => {
-    setFeatureInputs({
-      magnitude: '',
-      depth: '',
-      latitude: '',
-      longitude: '',
-      delta_t: '',
-      log_cum_energy_50: ''
-    });
-    setForecastError(null);
-    setForecastResult(null);
-  };
+
   const handleRefresh = async () => {
     setLoading(true);
     try {
@@ -342,11 +249,7 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api
     if (magnitude >= 5) return 'text-amber-500';
     return 'text-emerald-500';
   };
-  const getRiskBgColor = (riskLevel) => {
-    if (riskLevel === 'High') return 'bg-rose-50 text-rose-700 border-rose-200';
-    if (riskLevel === 'Moderate') return 'bg-amber-50 text-amber-700 border-amber-200';
-    return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-  };
+
   const getMagnitudeColor = (magnitude) => {
     if (!magnitude) return '#94a3b8';
     if (magnitude >= 7) return '#dc2626';
@@ -398,62 +301,7 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api
     'Intermediate': '#8b5cf6',
     'Deep': '#ec4899'
   };
-  const fields = [
-    {
-      id: 'magnitude',
-      label: 'Current Magnitude',
-      icon: Zap,
-      placeholder: '4.5',
-      description: 'Magnitude of the current earthquake (0-10)',
-      unit: 'M',
-      color: 'text-sky-500'
-    },
-    {
-      id: 'depth',
-      label: 'Depth',
-      icon: Layers,
-      placeholder: '50',
-      description: 'Depth of the earthquake epicenter',
-      unit: 'km',
-      color: 'text-purple-500'
-    },
-    {
-      id: 'latitude',
-      label: 'Latitude',
-      icon: Navigation,
-      placeholder: '35.68',
-      description: 'Latitude coordinate (-90 to 90)',
-      unit: '°',
-      color: 'text-emerald-500'
-    },
-    {
-      id: 'longitude',
-      label: 'Longitude',
-      icon: Navigation,
-      placeholder: '139.76',
-      description: 'Longitude coordinate (-180 to 180)',
-      unit: '°',
-      color: 'text-blue-500'
-    },
-    {
-      id: 'delta_t',
-      label: 'Time Delta',
-      icon: Clock,
-      placeholder: '3600',
-      description: 'Time since previous earthquake in seconds',
-      unit: 'sec',
-      color: 'text-amber-500'
-    },
-    {
-      id: 'log_cum_energy_50',
-      label: 'Log Cumulative Energy',
-      icon: Activity,
-      placeholder: '12.5',
-      description: 'Log10 of cumulative seismic energy (last 50 events)',
-      unit: 'log10',
-      color: 'text-rose-500'
-    }
-  ];
+
   if (loading && !stats) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-sky-50 via-blue-50 to-indigo-50 flex items-center justify-center">
@@ -678,8 +526,7 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api
             {[
               { id: 'rag', label: 'AI Assistant', icon: Brain },
               { id: 'search', label: 'Search', icon: Search },
-              { id: 'hotspots', label: 'Hotspots', icon: Flame },
-              { id: 'forecast', label: 'LSTM Forecast', icon: TrendingUp }
+              { id: 'hotspots', label: 'Hotspots', icon: Flame }
             ].map((tab) => {
               const Icon = tab.icon;
               return (
@@ -1038,220 +885,7 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api
             </div>
           </div>
         )}
-        {activeTab === 'forecast' && (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200">
-            <div className="p-6 border-b border-slate-200">
-              <div className="flex items-center space-x-3 mb-2">
-                <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-xl flex items-center justify-center">
-                  <TrendingUp className="w-6 h-6 text-white" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-bold text-slate-800">LSTM Earthquake Forecast</h2>
-                  <p className="text-sm text-slate-500">Feature-based magnitude prediction using deep learning</p>
-                </div>
-              </div>
-            </div>
-            <div className="p-6">
-              <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 mb-6 flex items-start space-x-3">
-                <Info className="w-5 h-5 text-sky-600 flex-shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <p className="text-sm text-sky-800 font-medium">How it works</p>
-                  <p className="text-sm text-sky-700 mt-1">
-                    The LSTM model analyzes 6 seismic features to predict the magnitude of the next earthquake.
-                    Enter current earthquake data and temporal patterns to get AI-powered forecasts.
-                  </p>
-                </div>
-              </div>
-              <div className="bg-white rounded-xl border border-slate-200 p-5 mb-6">
-                <h3 className="text-base font-bold text-slate-800 mb-4">Quick Examples</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {[
-                    { type: 'typical', label: 'Typical Event', desc: 'Moderate shallow earthquake' },
-                    { type: 'shallow', label: 'Shallow Strong', desc: 'High magnitude, shallow depth' },
-                    { type: 'deep', label: 'Deep Event', desc: 'Deep earthquake with high energy' }
-                  ].map((example) => (
-                    <button
-                      key={example.type}
-                      onClick={() => loadExample(example.type)}
-                      className="p-4 bg-gradient-to-br from-slate-50 to-sky-50 rounded-xl border border-slate-200 hover:border-sky-300 hover:shadow-md transition-all text-left"
-                    >
-                      <p className="font-semibold text-slate-800 text-sm">{example.label}</p>
-                      <p className="text-xs text-slate-500 mt-1">{example.desc}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="max-w-md mb-6">
-                <label className="block text-sm font-semibold text-slate-700 mb-2">Number of Predictions (1-10)</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="10"
-                  value={numPredictions}
-                  onChange={(e) => setNumPredictions(Math.min(10, Math.max(1, parseInt(e.target.value) || 1)))}
-                  className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-sky-500 focus:border-transparent"
-                />
-              </div>
-              <div className="bg-slate-50 rounded-xl border border-slate-200 p-6 mb-6">
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-base font-bold text-slate-800">Seismic Feature Inputs</h3>
-                  <button
-                    onClick={resetForecastForm}
-                    className="flex items-center space-x-2 px-3 py-1.5 bg-white text-slate-700 rounded-lg hover:bg-slate-100 transition-all border border-slate-200 text-sm"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>Reset</span>
-                  </button>
-                </div>
-              
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                  {fields.map((field) => {
-                    const Icon = field.icon;
-                    return (
-                      <div key={field.id} className="space-y-2">
-                        <label className="flex items-center space-x-2 text-sm font-semibold text-slate-700">
-                          <Icon className={`w-4 h-4 ${field.color}`} />
-                          <span>{field.label}</span>
-                        </label>
-                        <div className="relative">
-                          <input
-                            type="number"
-                            step="any"
-                            value={featureInputs[field.id]}
-                            onChange={(e) => handleInputChange(field.id, e.target.value)}
-                            placeholder={field.placeholder}
-                            className="w-full px-4 py-3 pr-16 border border-slate-300 rounded-xl focus:ring-2 focus:ring-sky-500 focus:border-transparent text-base bg-white"
-                          />
-                          <span className="absolute right-4 top-1/2 transform -translate-y-1/2 text-sm text-slate-400 font-medium">
-                            {field.unit}
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-500">{field.description}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-                {forecastError && (
-                  <div className="mt-5 p-4 bg-rose-50 border border-rose-200 rounded-xl flex items-start space-x-2">
-                    <AlertCircle className="w-5 h-5 text-rose-600 flex-shrink-0 mt-0.5" />
-                    <p className="text-sm text-rose-800">{forecastError}</p>
-                  </div>
-                )}
-                <button
-                  onClick={handleForecastPredict}
-                  disabled={predicting}
-                  className="mt-6 w-full md:w-auto px-10 py-4 bg-gradient-to-r from-sky-500 to-blue-600 text-white rounded-xl hover:from-sky-600 hover:to-blue-700 transition-all flex items-center justify-center disabled:opacity-50 font-medium shadow-lg hover:shadow-xl"
-                >
-                  {predicting ? (
-                    <>
-                      <RefreshCw className="w-5 h-5 mr-2 animate-spin" />
-                      Analyzing Features...
-                    </>
-                  ) : (
-                    <>
-                      <TrendingUp className="w-5 h-5 mr-2" />
-                      Predict Next Magnitude
-                    </>
-                  )}
-                </button>
-              </div>
-              {forecastResult && (
-                <div className="bg-white rounded-xl border border-slate-200 p-6 mb-6">
-                  <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center">
-                    <Target className="w-6 h-6 mr-2 text-sky-500" />
-                    Prediction Results
-                  </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                    <div className="bg-gradient-to-br from-slate-50 to-sky-50 p-6 rounded-xl border border-slate-200">
-                      <p className="text-sm text-slate-500 mb-2">Predicted Magnitude</p>
-                      <p className={`text-4xl font-bold ${getRiskColor(forecastResult.summary?.average_magnitude)}`}>
-                        M {forecastResult.summary?.average_magnitude?.toFixed(2) || 'N/A'}
-                      </p>
-                    </div>
-                  
-                    <div className="bg-gradient-to-br from-slate-50 to-sky-50 p-6 rounded-xl border border-slate-200">
-                      <p className="text-sm text-slate-500 mb-2">Risk Assessment</p>
-                      <span className={`inline-block px-4 py-2 rounded-xl text-lg font-bold border ${getRiskBgColor(forecastResult.summary?.risk_assessment)}`}>
-                        {forecastResult.summary?.risk_assessment || 'Unknown'}
-                      </span>
-                    </div>
-                    <div className="bg-gradient-to-br from-slate-50 to-sky-50 p-6 rounded-xl border border-slate-200">
-                      <p className="text-sm text-slate-500 mb-2">Confidence</p>
-                      <p className="text-2xl font-bold text-sky-600 capitalize">
-                        {forecastResult.predictions?.[0]?.confidence || 'N/A'}
-                      </p>
-                    </div>
-                  </div>
-                  {forecastResult.predictions && forecastResult.predictions.length > 0 && (
-                    <div className="space-y-3 mb-6">
-                      <h4 className="text-sm font-bold text-slate-700 mb-3">Detailed Forecast</h4>
-                      {forecastResult.predictions.map((pred, idx) => (
-                        <div key={idx} className="p-5 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
-                          <div className="flex items-center space-x-4">
-                            <div className="w-12 h-12 bg-sky-100 rounded-xl flex items-center justify-center">
-                              <TrendingUp className="w-6 h-6 text-sky-600" />
-                            </div>
-                            <div>
-                              <p className="text-sm text-slate-500">Next Earthquake</p>
-                              <p className={`text-3xl font-bold ${getRiskColor(pred.predicted_magnitude)}`}>
-                                M {pred.predicted_magnitude?.toFixed(2)}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <span className="px-3 py-1.5 bg-sky-100 text-sky-700 text-xs font-semibold rounded-lg capitalize">
-                              {pred.confidence} confidence
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="p-5 bg-slate-50 rounded-xl border border-slate-200 mb-6">
-                    <h4 className="text-sm font-bold text-slate-700 mb-3">Input Features Used</h4>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
-                      {fields.map((field) => (
-                        <div key={field.id} className="flex items-center space-x-2">
-                          <span className="text-slate-500">{field.label}:</span>
-                          <span className="font-semibold text-slate-800">
-                            {featureInputs[field.id]} {field.unit}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  {forecastResult.disclaimer && (
-                    <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start space-x-2">
-                      <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                      <p className="text-xs text-amber-800">{forecastResult.disclaimer}</p>
-                    </div>
-                  )}
-                </div>
-              )}
-              <div className="bg-white rounded-xl border border-slate-200 p-6">
-                <h3 className="text-base font-bold text-slate-800 mb-4">Feature Definitions</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {fields.map((field) => {
-                    const Icon = field.icon;
-                    return (
-                      <div key={field.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200">
-                        <div className="flex items-start space-x-3">
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center bg-white border border-slate-200 flex-shrink-0`}>
-                            <Icon className={`w-4 h-4 ${field.color}`} />
-                          </div>
-                          <div className="flex-1">
-                            <p className="font-semibold text-slate-800 text-sm">{field.label}</p>
-                            <p className="text-xs text-slate-600 mt-1">{field.description}</p>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+
       </div>
     </div>
   );
